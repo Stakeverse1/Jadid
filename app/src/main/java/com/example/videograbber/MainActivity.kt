@@ -13,7 +13,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
-import android.media.MediaPlayer
+import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -35,12 +35,10 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
-import android.widget.MediaController
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import android.widget.VideoView
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -138,6 +136,28 @@ class MainActivity : Activity() {
         return g
     }
 
+    // Apple-style press feedback: the button visibly dims while it is held,
+    // with a short fade back when released.
+    private fun darken(color: Int, factor: Float = 0.78f): Int {
+        if (Color.alpha(color) == 0) return Color.parseColor("#E5E7EB")
+        val r = (Color.red(color) * factor).toInt().coerceIn(0, 255)
+        val g = (Color.green(color) * factor).toInt().coerceIn(0, 255)
+        val b = (Color.blue(color) * factor).toInt().coerceIn(0, 255)
+        return Color.argb(Color.alpha(color), r, g, b)
+    }
+
+    private fun pressable(normalColor: Int, radius: Int): StateListDrawable {
+        return pressableCustom(normalColor, darken(normalColor), radius)
+    }
+
+    private fun pressableCustom(normalColor: Int, pressedColor: Int, radius: Int): StateListDrawable {
+        val d = StateListDrawable()
+        d.addState(intArrayOf(android.R.attr.state_pressed), rect(pressedColor, radius))
+        d.addState(intArrayOf(), rect(normalColor, radius))
+        d.setExitFadeDuration(150)
+        return d
+    }
+
     private fun tv(text: String, size: Float, color: Int, bold: Boolean = false): TextView {
         val v = TextView(this)
         v.text = text
@@ -154,7 +174,7 @@ class MainActivity : Activity() {
         v.setTextColor(fg)
         v.gravity = Gravity.CENTER
         v.setPadding(dp(14), dp(8), dp(14), dp(8))
-        v.background = rect(bg, 18)
+        v.background = pressable(bg, 18)
         v.setOnClickListener { click() }
         return v
     }
@@ -166,6 +186,7 @@ class MainActivity : Activity() {
         v.setTextColor(cPrimary)
         v.gravity = Gravity.CENTER
         v.layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
+        v.background = pressableCustom(Color.TRANSPARENT, Color.parseColor("#E5E7EB"), 20)
         v.setOnClickListener { click() }
         return v
     }
@@ -533,7 +554,7 @@ class MainActivity : Activity() {
             chipBox.orientation = LinearLayout.HORIZONTAL
             chipBox.gravity = Gravity.CENTER_VERTICAL
             chipBox.setPadding(dp(12), dp(8), dp(8), dp(8))
-            chipBox.background = rect(if (isActive) cPrimary else Color.WHITE, 18)
+            chipBox.background = pressable(if (isActive) cPrimary else Color.WHITE, 18)
             val titleTv = TextView(this)
             titleTv.text = shortTitle(tab)
             titleTv.textSize = 13f
@@ -637,7 +658,7 @@ class MainActivity : Activity() {
         for ((i, b) in concButtons.withIndex()) {
             val n = i + 1
             val selected = n == Downloads.concurrent
-            b.background = rect(if (selected) cPrimary else cChipBg, 18)
+            b.background = pressable(if (selected) cPrimary else cChipBg, 18)
             b.setTextColor(if (selected) Color.WHITE else cText)
             if (selected) b.typeface = Typeface.DEFAULT_BOLD else b.typeface = Typeface.DEFAULT
         }
@@ -841,7 +862,7 @@ class MainActivity : Activity() {
                 val tab = activeTab()
                 Downloads.add(m, tab?.url ?: m.ref)
                 btn.text = "✓ Added"
-                btn.background = rect(cOk, 18)
+                btn.background = pressable(cOk, 18)
                 updateTabs()
             }
         }
@@ -871,23 +892,23 @@ class MainActivity : Activity() {
         box.addView(nameTv, lp(WRAP, WRAP, 0, 4, 0, 0))
         box.addView(tv("This is the video that will be downloaded.", 12f, cSub), lp(WRAP, WRAP, 0, 2, 0, 10))
 
-        val vv = VideoView(this)
-        vv.layoutParams = LinearLayout.LayoutParams(MATCH, dp(220))
-        vv.setBackgroundColor(Color.BLACK)
-        val mc = MediaController(this)
-        mc.setAnchorView(vv)
-        vv.setMediaController(mc)
-        vv.setOnPreparedListener { mp: MediaPlayer -> mp.start() }
-        vv.setOnErrorListener { _, _, _ ->
-            Toast.makeText(this, "Preview is not available for this link — try Download instead", Toast.LENGTH_LONG).show()
-            true
-        }
-        box.addView(vv, LinearLayout.LayoutParams(MATCH, dp(220)))
+        // WebView preview: unlike VideoView, this shares the browser's cookies
+        // and user agent, so signed links and HLS streams that need the site's
+        // session actually play instead of failing silently.
+        val pv = WebView(this)
+        pv.setBackgroundColor(Color.BLACK)
+        pv.settings.javaScriptEnabled = true
+        pv.settings.domStorageEnabled = true
+        pv.settings.mediaPlaybackRequiresUserGesture = false
+        pv.webChromeClient = WebChromeClient()
+        pv.webViewClient = WebViewClient()
+        box.addView(pv, LinearLayout.LayoutParams(MATCH, dp(220)))
+        val safeUrl = m.url.replace("&", "&amp;").replace("\"", "&quot;")
+        val html = "<html><body style=\"margin:0;background:#000\">" +
+            "<video controls autoplay playsinline style=\"width:100%;height:100%\" src=\"" + safeUrl + "\"></video>" +
+            "</body></html>"
         try {
-            val headers = HashMap<String, String>()
-            if (m.ref.isNotEmpty()) headers["Referer"] = m.ref
-            if (Downloads.ua.isNotEmpty()) headers["User-Agent"] = Downloads.ua
-            vv.setVideoURI(Uri.parse(m.url), headers)
+            pv.loadDataWithBaseURL(if (m.ref.isNotEmpty()) m.ref else null, html, "text/html", "utf-8", null)
         } catch (e: Exception) {
             Toast.makeText(this, "Preview is not available for this link", Toast.LENGTH_SHORT).show()
         }
@@ -901,12 +922,24 @@ class MainActivity : Activity() {
             d.dismiss()
         }
         row.addView(dlBtn)
+        val tabBtn = chip("🌐 Open in new tab", cSoft, cPrimary) {
+            d.dismiss()
+            addTab(m.url, true)
+            selectTab(false)
+        }
+        row.addView(tabBtn, lp(WRAP, WRAP, 8, 0, 0, 0))
         val closeBtn = chip("Close", cChipBg, cText) { d.dismiss() }
         row.addView(closeBtn, lp(WRAP, WRAP, 8, 0, 0, 0))
         box.addView(row, lp(WRAP, WRAP, 0, 14, 0, 0))
 
         d.setContentView(box)
-        d.setOnDismissListener { vv.stopPlayback() }
+        d.setOnDismissListener {
+            try {
+                pv.stopLoading()
+                pv.destroy()
+            } catch (e: Exception) {
+            }
+        }
         val w = d.window
         if (w != null) {
             w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
