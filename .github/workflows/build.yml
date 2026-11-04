@@ -7,7 +7,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: unzip -o project.zip -d proj
+      - name: Unzip project
+        run: |
+          rm -rf proj
+          mkdir proj
+          unzip -q project.zip -d proj
+      - name: Fix compile error
+        run: |
+          D=proj/app/src/main/java/com/example/videograbber
+          sed -i 's/fun setConcurrent(/fun applyConcurrent(/' $D/Downloads.kt
+          sed -i 's/Downloads.setConcurrent(/Downloads.applyConcurrent(/' $D/MainActivity.kt
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -15,9 +24,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
-      - run: gradle assembleDebug --no-daemon
+      - name: Build
         working-directory: proj
+        run: gradle assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: VideoGrabber-apk
+          name: VideoGrabber-debug
           path: proj/app/build/outputs/apk/debug/*.apk
